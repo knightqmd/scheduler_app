@@ -58,22 +58,25 @@ class WeekSchedule:
         self.free_text = text.strip() or None
 
     def as_markdown(self) -> str:
-        blocks: List[str] = []
+        header_lines: List[str] = []
+        body_lines: List[str] = []
         if self.free_text:
-            blocks.append("用户提供的日程描述：")
-            blocks.append(self.free_text)
+            header_lines.append("用户提供的日程描述：")
+            header_lines.append(self.free_text)
         if not self.days:
-            if blocks:
-                return "\n".join(blocks)
+            if header_lines:
+                return "\n".join(header_lines)
             return "当前一周暂无日程。"
-        blocks: List[str] = []
         for day, items in self.days.items():
-            blocks.append(f"{day}：")
+            body_lines.append(f"{day}：")
             if not items:
-                blocks.append(" - （无计划）")
+                body_lines.append(" - （无计划）")
                 continue
-            blocks.extend(item.as_bullet() for item in items)
+            body_lines.extend(item.as_bullet() for item in items)
         header = f"用户 {self.owner} 一周日程：\n"
         if self.free_text:
             header += "（以下基于用户的自由描述与已有条目整理）\n"
-        return header + "\n".join(blocks)
+        prefix = "\n".join(header_lines)
+        if prefix:
+            prefix += "\n"
+        return prefix + header + "\n".join(body_lines)

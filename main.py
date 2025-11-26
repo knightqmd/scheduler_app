@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import re
 import sys
+from typing import List, Optional
 
-from scheduler_app import ScheduleItem, ScheduleService, UserSchedule
+from scheduler_app import ScheduleItem, ScheduleService, WeekSchedule
 from scheduler_app.model_client import DoubaoModelClient
 
 logger = logging.getLogger(__name__)
@@ -29,43 +32,10 @@ def read_user_request() -> str:
         print("\n已取消。")
         sys.exit(0)
     if not data:
-        data = ""
-        print(f"未检测到输入，使用默认示例：{data}")
+        print("未检测到输入，请重新运行并提供日程需求。")
+        sys.exit(1)
     logger.debug("用户输入内容：%s", data)
     return data
-
-
-def load_existing_schedule() -> UserSchedule:
-    schedule = UserSchedule(owner="小李")
-    schedule.add_item(
-        ScheduleItem(
-            title="看电影",
-            start="09:30",
-            end="10:00",
-            location="会议室 ",
-            notes="同步核心进度",
-        )
-    )
-    schedule.add_item(
-        ScheduleItem(
-            title="客户回访",
-            start="11:00",
-            end="12:00",
-            location="线上会议",
-            notes="确认交付验收",
-        )
-    )
-    schedule.add_item(
-        ScheduleItem(
-            title="Roadmap 讨论",
-            start="16:00",
-            end="17:00",
-            location="会议室 C",
-            notes="需提前准备资料",
-        )
-    )
-    logger.debug("共加载 %d 条已有日程", len(schedule.items))
-    return schedule
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,26 +54,122 @@ def configure_logging(enable_debug: bool) -> None:
     logger.debug("日志系统已初始化，等级：%s", logging.getLevelName(lvl))
 
 
+def read_week_schedule_from_input() -> WeekSchedule:
+    """Collect existing weekly schedule as free-form text (no format constraints)."""
+    print("请输入你本周已有的日程/安排（自由描述，多行输入，空行结束，可留空跳过）：")
+    try:
+        lines = []
+        while True:
+            line = sys.stdin.readline()
+            if line == "":
+                break
+            if line.strip() == "":
+                break
+            lines.append(line.rstrip("\n"))
+        free_text = "\n".join(lines).strip()
+    except KeyboardInterrupt:
+        print("\n已取消。")
+        sys.exit(0)
+    schedule = WeekSchedule(owner="用户")
+    if free_text:
+        schedule.set_free_text(free_text)
+    logger.info("用户自由输入的日程描述长度：%d", len(free_text))
+    return schedule
+
+
+def extract_json_array(text: str) -> Optional[str]:
+    """Best-effort extraction of JSON array substring from model output."""
+    match = re.search(r"\[.*\]", text, re.S)
+    if match:
+        return match.group(0)
+    return None
+
+
+VALID_DAYS = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"}
+
+
+def _is_valid_time_str(value: str) -> bool:
+    return bool(re.match(r"^[0-2]\d:[0-5]\d$", value))
+
+
+def update_schedule_from_model_output(
+    schedule: WeekSchedule, output: str
+) -> List[ScheduleItem]:
+    """Parse model JSON output and replace schedule items with validation."""
+    json_block = extract_json_array(output)
+    if not json_block:
+        raise ValueError("未找到 JSON 数组格式的模型输出")
+    try:
+        items = json.loads(json_block)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"模型输出 JSON 解析失败: {exc}") from exc
+    if not isinstance(items, list):
+        raise ValueError("模型输出不是列表")
+
+    schedule.days.clear()
+    schedule.free_text = None
+    parsed_items: List[ScheduleItem] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        day = entry.get("day")
+        start = entry.get("start")
+        end = entry.get("end")
+        title = entry.get("title")
+        location = entry.get("location") or None
+        notes = entry.get("notes") or None
+        if not all([day, start, end, title]):
+            logger.warning("跳过字段不完整的条目：%s", entry)
+            continue
+        if str(day) not in VALID_DAYS:
+            logger.warning("非法 day，跳过：%s", day)
+            continue
+        if not (_is_valid_time_str(str(start)) and _is_valid_time_str(str(end))):
+            logger.warning("时间格式不正确，跳过：%s-%s", start, end)
+            continue
+        item = ScheduleItem(
+            title=str(title),
+            start=str(start),
+            end=str(end),
+            location=str(location) if location else None,
+            notes=str(notes) if notes else None,
+        )
+        schedule.add_item(day=str(day), item=item)
+        parsed_items.append(item)
+    if not parsed_items:
+        raise ValueError("模型输出未包含有效日程条目")
+    return parsed_items
+
+
 def main() -> None:
     args = parse_args()
     enable_debug = args.debug or os.environ.get("SCHEDULER_DEBUG") == "1"
     configure_logging(enable_debug)
     logger.info("启动 AI 日程规划 CLI，调试模式：%s", enable_debug)
+    existing_schedule = read_week_schedule_from_input()
     user_request = read_user_request()
-    schedule = load_existing_schedule()
-    logger.info("已收集输入，准备调用模型")
+    logger.info("已收集输入，准备调用模型，以本周日程为上下文调整新增需求")
     model_client = DoubaoModelClient()
     service = ScheduleService(model_client)
     try:
-        plan = service.plan(user_request, schedule)
+        plan = service.plan(user_request, existing_schedule)
     except Exception as exc:
         logger.exception("生成日程失败")
         print("调用模型失败，请检查 ARK_API_KEY、网络和模型配置。")
         print(f"错误信息：{exc}")
         sys.exit(1)
     else:
-        print("\n===== 推荐日程 =====")
+        print("\n===== 模型返回（原始） =====")
         print(plan.strip())
+        try:
+            update_schedule_from_model_output(existing_schedule, plan)
+        except Exception as exc:
+            logger.exception("解析或更新日程失败")
+            print("未能解析模型输出为固定格式，请调整提示或稍后重试。")
+            print(f"错误信息：{exc}")
+            sys.exit(1)
+        print("\n===== 已更新的一周日程 =====")
+        print(existing_schedule.as_markdown())
 
 
 if __name__ == "__main__":
