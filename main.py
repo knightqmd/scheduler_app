@@ -29,7 +29,7 @@ def read_user_request() -> str:
         print("\n已取消。")
         sys.exit(0)
     if not data:
-        data = "安排一次下午的健身，并预留时间准备第二天的产品评审。"
+        data = ""
         print(f"未检测到输入，使用默认示例：{data}")
     logger.debug("用户输入内容：%s", data)
     return data
@@ -39,10 +39,10 @@ def load_existing_schedule() -> UserSchedule:
     schedule = UserSchedule(owner="小李")
     schedule.add_item(
         ScheduleItem(
-            title="团队站会",
+            title="看电影",
             start="09:30",
             end="10:00",
-            location="会议室 A",
+            location="会议室 ",
             notes="同步核心进度",
         )
     )
@@ -94,9 +94,16 @@ def main() -> None:
     logger.info("已收集输入，准备调用模型")
     model_client = DoubaoModelClient()
     service = ScheduleService(model_client)
-    plan = service.plan(user_request, schedule)
-    print("\n===== 推荐日程 =====")
-    print(plan.strip())
+    try:
+        plan = service.plan(user_request, schedule)
+    except Exception as exc:
+        logger.exception("生成日程失败")
+        print("调用模型失败，请检查 ARK_API_KEY、网络和模型配置。")
+        print(f"错误信息：{exc}")
+        sys.exit(1)
+    else:
+        print("\n===== 推荐日程 =====")
+        print(plan.strip())
 
 
 if __name__ == "__main__":

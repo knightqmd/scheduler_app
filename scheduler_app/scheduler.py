@@ -29,8 +29,7 @@ class ScheduleService:
             user_request,
             len(existing_schedule.items),
         )
-        prompt = (
-            "你是一个日程规划助手。请根据用户的需求生成一个合理的日程安排，"
+        prompt = ( 
             "同时兼顾他已有的日程，不要与现有安排冲突。如有需要，可在空闲时间"
             "插入新的任务或优化建议。请用条目形式输出。\n\n"
             f"【用户需求】\n{user_request}\n\n"
