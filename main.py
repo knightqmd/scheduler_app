@@ -124,6 +124,7 @@ def update_schedule_from_model_output(
             end=str(end),
             location=str(location) if location else None,
             notes=str(notes) if notes else None,
+            tag=str(entry.get("tag")) if entry.get("tag") else None,
         )
         schedule.add_item(day=str(day), item=item)
         parsed_items.append(item)

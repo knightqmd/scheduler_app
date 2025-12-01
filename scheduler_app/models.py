@@ -13,6 +13,7 @@ class ScheduleItem:
     end: str
     location: Optional[str] = None
     notes: Optional[str] = None
+    tag: Optional[str] = None  # e.g., 短期提醒 / 长期习惯
 
     def as_bullet(self) -> str:
         details = [f"{self.start} → {self.end}", self.title]
@@ -20,6 +21,8 @@ class ScheduleItem:
             details.append(f"@ {self.location}")
         if self.notes:
             details.append(f"({self.notes})")
+        if self.tag:
+            details.append(f"[{self.tag}]")
         return " - " + " | ".join(details)
 
 
