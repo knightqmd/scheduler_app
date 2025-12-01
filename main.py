@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from scheduler_app import ScheduleItem, ScheduleService, WeekSchedule
 from scheduler_app.model_client import DoubaoModelClient
+from scheduler_app.schedule_loader import load_existing_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -45,36 +46,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="输出详细调试信息（或设置环境变量 SCHEDULER_DEBUG=1）",
     )
+    parser.add_argument(
+        "--request",
+        help="直接传入日程需求字符串，便于脚本化运行（为空则进入交互式输入）",
+    )
     return parser.parse_args()
 
 
 def configure_logging(enable_debug: bool) -> None:
     lvl = logging.DEBUG if enable_debug else logging.INFO
+    level_name_map = {
+        logging.DEBUG: "调试",
+        logging.INFO: "信息",
+        logging.WARNING: "警告",
+        logging.ERROR: "错误",
+        logging.CRITICAL: "严重",
+    }
+    for level, name in level_name_map.items():
+        logging.addLevelName(level, name)
     logging.basicConfig(level=lvl, format="[%(levelname)s] %(name)s - %(message)s")
     logger.debug("日志系统已初始化，等级：%s", logging.getLevelName(lvl))
-
-
-def read_week_schedule_from_input() -> WeekSchedule:
-    """Collect existing weekly schedule as free-form text (no format constraints)."""
-    print("请输入你本周已有的日程/安排（自由描述，多行输入，空行结束，可留空跳过）：")
-    try:
-        lines = []
-        while True:
-            line = sys.stdin.readline()
-            if line == "":
-                break
-            if line.strip() == "":
-                break
-            lines.append(line.rstrip("\n"))
-        free_text = "\n".join(lines).strip()
-    except KeyboardInterrupt:
-        print("\n已取消。")
-        sys.exit(0)
-    schedule = WeekSchedule(owner="用户")
-    if free_text:
-        schedule.set_free_text(free_text)
-    logger.info("用户自由输入的日程描述长度：%d", len(free_text))
-    return schedule
 
 
 def extract_json_array(text: str) -> Optional[str]:
@@ -146,8 +137,14 @@ def main() -> None:
     enable_debug = args.debug or os.environ.get("SCHEDULER_DEBUG") == "1"
     configure_logging(enable_debug)
     logger.info("启动 AI 日程规划 CLI，调试模式：%s", enable_debug)
-    existing_schedule = read_week_schedule_from_input()
-    user_request = read_user_request()
+    existing_schedule = load_existing_schedule()
+    print("检测到以下已有日程，将自动纳入规划：")
+    print(existing_schedule.as_markdown())
+    user_request = args.request.strip() if args.request else ""
+    if not user_request:
+        user_request = read_user_request()
+    else:
+        logger.info("收到命令行传入的日程需求，跳过交互输入")
     logger.info("已收集输入，准备调用模型，以本周日程为上下文调整新增需求")
     model_client = DoubaoModelClient()
     service = ScheduleService(model_client)
